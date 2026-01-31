@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Income & Expense Visualizer</title>
+<style>
+  :root{--bg:#0f1724;--card:#0b1250;--muted:#9aa4b2;--accent:#60a5fa;--danger:#f87171}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial,sans-serif;background: #353839;color:#e6eef6}
+  .wrap{max-width:700px;margin:12px auto;padding:12px;border-radius:8px}
+  h1{font-size:16px;margin:0 0 8px}
+  .grid{display:grid;grid-template-columns:1fr 360px;gap:12px}
+  .card{background:linear-gradient(to bottom, rgba(74,129,40,0.8), rgba(74,129,40,0.1));padding:16px;border-radius:8px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  input[type=number], input[type=datetime-local], input[type=text], select{
+    padding:6px 8px;
+    border-radius:6px;
+    border:1px solid rgba(255,255,255,0.8);
+    background:transparent;
+    color:#e6eef6;
+    font-size:13px;
+    box-sizing:border-box;
+    height:40px;
+    width:100%
+  }
+  select{-webkit-appearance:menulist-button}
+  select option{ color:#000 !important }
+  .ticker{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;font-size:48px;padding:8px;border-radius:6px;background:linear-gradient(90deg,rgba(255,255,255,0.05),transparent);margin:6px 0;color:#e6eef6;text-align:left}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{padding:6px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px}
+  th:nth-child(n+2){padding-left:4px}
+  .muted{color:var(--muted);font-size:12px}
+  .flex-row{display:flex;gap:8px;align-items:end}
+  .flex-row > div{flex:1;display:flex;flex-direction:column}
+  .freq-col{
+    flex:0 0 100px !important;
+  }
+
+  button{
+    background:var(--accent);
+    border:0;
+    padding:0 8px;
+    border-radius:6px;
+    color:#04243b;
+    font-weight:600;
+    cursor:pointer;
+    font-size:13px;
+    height:40px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    width:100%
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Income & Expense Visualizer</h1>
+    <div class="ticker" id="ticker">$0.00</div>
+    <div class="grid">
+      <div class="card">
+        <div class="flex-row">
+          <div>
+            <label>Paycheck</label>
+            <input id="payAmount" type="number" step="0.01" value="0" />
+          </div>
+          <div class="freq-col">
+            <label>Frequency</label>
+            <select id="payFreq">
+              <option value="365">Daily</option>
+              <option value="52">Weekly</option>
+              <option value="26">Bi-Weekly</option>
+              <option value="24">Semi-Monthly</option>
+              <option value="12" selected>Monthly</option>
+              <option value="4">Quarterly</option>
+              <option value="1">Yearly</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex-row" style="margin-top:16px">
+          <div>
+            <label>Ref date/time</label>
+            <input id="lastPay" type="datetime-local" />
+          </div>
+          <div class="freq-col">
+            <button id="resetNow">Set To Now</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="flex-row">
+          <div>
+            <label>Name</label>
+            <input id="billName" type="text" placeholder="Rent" />
+          </div>
+          <div>
+            <label>Amount</label>
+            <input id="billAmount" type="number" step="0.01" value="0" />
+          </div>
+          <div class="freq-col">
+            <label>Frequency</label>
+            <select id="billFreq">
+              <option value="365">Daily</option>
+              <option value="52">Weekly</option>
+              <option value="26">Bi-Weekly</option>
+              <option value="24">Semi-Monthly</option>
+              <option value="12" selected>Monthly</option>
+              <option value="4">Quarterly</option>
+              <option value="1">Yearly</option>
+            </select>
+          </div>
+          <div>
+            <button id="addBillBtn">Add Bill</button>
+          </div>
+        </div>
+        <table id="billsTable" aria-live="polite" style="margin-top:16px">
+          <thead>
+            <tr><th style="width:40%">Name</th><th>Amount</th><th>Freq</th><th>Annual</th><th style="width:80px">Action</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+<script>
+(function(){
+  const secondsInYear = 365.2425 * 86400;
+  const moneyEl = document.getElementById('ticker');
+  const payAmount = document.getElementById('payAmount');
+  const payFreq = document.getElementById('payFreq');
+  const lastPay = document.getElementById('lastPay');
+  const billName = document.getElementById('billName');
+  const billAmount = document.getElementById('billAmount');
+  const billFreq = document.getElementById('billFreq');
+  const addBillBtn = document.getElementById('addBillBtn');
+  const billsTableBody = document.querySelector('#billsTable tbody');
+  const resetNowBtn = document.getElementById('resetNow');
+  let refTime = null;
+  let intervalId = null;
+  let bills = [];
+  const currency = new Intl.NumberFormat(undefined,{style:'currency',currency:'USD',maximumFractionDigits:2});
+  function parseRef(){
+    if(lastPay.value) return new Date(lastPay.value).getTime();
+    return Date.now();
+  }
+  function incomeRatePerSec(){
+    const amt = parseFloat(payAmount.value) || 0;
+    const freq = parseFloat(payFreq.value) || 0;
+    const annual = amt * freq;
+    return annual / secondsInYear;
+  }
+  function expenseRatePerSec(){
+    return bills.reduce((s,b)=> s + ((b.amount||0) * (b.freq||0)) / secondsInYear, 0);
+  }
+  function netRatePerSec(){
+    return incomeRatePerSec() - expenseRatePerSec();
+  }
+  function renderBills(){
+    billsTableBody.innerHTML = '';
+    bills.forEach((b,i)=>{
+      const tr = document.createElement('tr');
+      const annual = (b.amount||0) * (b.freq||0);
+      tr.innerHTML = `
+        <td>${escapeHtml(b.name)}</td>
+        <td>${currency.format(b.amount||0)}</td>
+        <td>${b.freq}</td>
+        <td>${currency.format(annual)}</td>
+        <td><button data-index="${i}" class="btn-del">Remove</button></td>
+      `;
+      billsTableBody.appendChild(tr);
+    });
+    billsTableBody.querySelectorAll('.btn-del').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        const idx = parseInt(e.currentTarget.getAttribute('data-index'));
+        if(!isNaN(idx)) bills.splice(idx,1);
+        renderBills();
+      });
+    });
+  }
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[s]);
+  }
+  function updateTicker(){
+    if(refTime === null) refTime = parseRef();
+    const now = Date.now();
+    let elapsed = (now - refTime) / 1000;
+    if(elapsed < 0) elapsed = 0;
+    const net = netRatePerSec();
+    const value = elapsed * net;
+    moneyEl.textContent = currency.format(value);
+  }
+  addBillBtn.addEventListener('click', ()=>{
+    let name = (billName.value || '').trim();
+    if(!name) name = 'Rent';
+    const amt = parseFloat(billAmount.value) || 0;
+    const freq = parseFloat(billFreq.value) || 0;
+    bills.push({name, amount: amt, freq});
+    billName.value = '';
+    billAmount.value = '0';
+    billFreq.value = '12';
+    renderBills();
+  });
+  [payAmount,payFreq,billFreq].forEach(el=> el.addEventListener('change', ()=>{ updateTicker(); }));
+  lastPay.addEventListener('change', ()=>{ refTime = parseRef(); updateTicker(); });
+  resetNowBtn.addEventListener('click', ()=>{
+    let now = new Date();
+    let year = now.getFullYear();
+    let month = (now.getMonth() + 1).toString().padStart(2, '0');
+    let day = now.getDate().toString().padStart(2, '0');
+    let hours = now.getHours().toString().padStart(2, '0');
+    let minutes = now.getMinutes().toString().padStart(2, '0');
+    lastPay.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+    refTime = parseRef();
+    updateTicker();
+  });
+  refTime = null;
+  renderBills();
+  updateTicker();
+  if(!intervalId) intervalId = setInterval(updateTicker, 10);
+})();
+</script>
+</body>
+</html>
