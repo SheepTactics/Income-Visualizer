@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Income & Expense Visualizer</title>
+<style>
+:root{--muted:#9aa4b2;--accent:#60a5fa;--danger:#f87171;--green:#4ade80;}
+html,body{margin:0;font-family:Inter,system-ui,sans-serif;background:#353839;color:#e6eef6;overflow-x:hidden}
+
+#fall-stage{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden;perspective:1600px;}
+
+.bill-wrap{position:absolute;width:110px;height:52px;transform-style:preserve-3d;will-change:transform;}
+.bill{
+  width:100%;height:100%;border-radius:6px;
+  background:linear-gradient(135deg,#d4edda,#9dd6ac);
+  border:2px solid #1f6b3d;
+  box-shadow:0 8px 24px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.35);
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:20px;color:#134b2e;
+  font-family:ui-monospace,monospace;user-select:none;position:relative;
+}
+.bill::before{content:'';position:absolute;inset:4px;border:1px dashed rgba(31,107,61,0.4);border-radius:3px;pointer-events:none;}
+.bill.red{background:linear-gradient(135deg,#fecaca,#f87171);border-color:#991b1b;color:#7f1d1d;}
+.bill.red::before{border-color:rgba(153,27,27,0.4);}
+
+.penny-wrap{position:absolute;width:28px;height:28px;transform-style:preserve-3d;will-change:transform;}
+.penny{
+  width:100%;height:100%;border-radius:50%;
+  background:radial-gradient(circle at 38% 32%,#f0b445,#b5650d 55%,#7a3c00);
+  border:1.5px solid #6b3300;
+  box-shadow:0 3px 10px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,200,70,0.35);
+  display:flex;align-items:center;justify-content:center;
+  font-size:17px;font-weight:900;color:#fff;
+  font-family:ui-monospace,monospace;user-select:none;
+}
+.penny.red{background:radial-gradient(circle at 38% 32%,#fca5a5,#ef4444 55%,#7f1d1d);border-color:#7f1d1d;}
+
+.wrap{position:relative;z-index:10;max-width:760px;margin:12px auto;padding:0 12px;box-sizing:border-box;}
+h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
+
+.ticker-row{position:relative;}
+.ticker{
+  display:block;width:100%;box-sizing:border-box;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace;
+  font-size:48px;padding:8px 56px 4px 8px;
+  border-radius:6px 6px 0 0;
+  background:linear-gradient(90deg,rgba(255,255,255,0.05),transparent);
+  color:#e6eef6;transition:color .3s;
+}
+.ticker.positive{color:var(--green)}.ticker.negative{color:var(--danger)}
+
+.ticker-btns{position:absolute;top:10px;right:10px;display:flex;gap:6px;}
+.icon-btn{
+  width:34px;height:34px;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:8px;background:rgba(0,0,0,0.4);
+  border:1.5px solid rgba(255,255,255,0.18);
+  cursor:pointer;user-select:none;
+  transition:border-color .15s,background .15s,box-shadow .15s;
+}
+.icon-btn:hover{border-color:rgba(255,255,255,0.35);background:rgba(0,0,0,0.55);}
+.icon-btn.active{border-color:#c8860a;background:rgba(200,134,10,0.18);box-shadow:0 0 10px rgba(200,134,10,0.35);}
+#pennyBtn .penny-ico{font-size:21px;font-weight:900;color:rgba(154,164,178,0.5);font-family:ui-monospace,monospace;transition:color .15s;pointer-events:none;}
+#pennyBtn.active .penny-ico{color:#d49010;}
+
+.progress-wrap{height:5px;background:rgba(255,255,255,0.08);overflow:hidden;}
+.progress-bar{height:100%;width:0%;background:linear-gradient(90deg,rgba(255,255,255,0.45),#fff);border-radius:0 3px 3px 0;box-shadow:0 0 8px rgba(255,255,255,0.4);}
+.progress-bar.neg{background:linear-gradient(90deg,rgba(248,113,113,0.4),var(--danger));box-shadow:0 0 8px rgba(248,113,113,0.5);}
+.cycle-wrap{height:3px;background:rgba(255,255,255,0.06);border-radius:0 0 4px 4px;overflow:hidden;margin-bottom:8px;}
+.cycle-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#93c5fd);border-radius:0 3px 3px 0;box-shadow:0 0 6px rgba(96,165,250,0.4);}
+
+.stats-row{display:flex;margin-bottom:10px;}
+.stats-row .stat-pill+.stat-pill{margin-left:4px;}
+@supports (gap:4px){.stats-row{gap:4px;} .stats-row .stat-pill+.stat-pill{margin-left:0;}}
+.stat-pill{flex:1;min-width:0;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:4px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;}
+.stat-pill .lbl{color:var(--muted);font-size:10px;white-space:nowrap;}
+.stat-pill .val{font-weight:700;font-family:ui-monospace,monospace;font-size:11px;width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.val.up{color:var(--green)}.val.dn{color:var(--danger)}.val.zero{color:var(--muted)}
+
+.grid{display:grid;grid-template-columns:1fr 390px;gap:12px;}
+.card{background:linear-gradient(to bottom,rgba(74,129,40,0.82),rgba(74,129,40,0.12));padding:16px;border-radius:8px;box-sizing:border-box;}
+.card label{display:block;font-size:12px;color:#e6eef6;margin-bottom:6px;}
+.card input,.card select{padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.5);background:rgba(0,0,0,0.2);color:#e6eef6;font-size:13px;box-sizing:border-box;height:40px;width:100%;}
+
+.card select{-webkit-appearance:menulist-button;}
+.card select option{color:#000!important;}
+.card button{background:var(--accent);border:0;padding:0 8px;border-radius:6px;color:#04243b;font-weight:600;cursor:pointer;font-size:13px;height:40px;display:flex;align-items:center;justify-content:center;width:100%;}
+.flex-row{display:flex;align-items:end;}
+.flex-row>div+div{margin-left:8px;}
+@supports (gap:8px){.flex-row{gap:8px;} .flex-row>div+div{margin-left:0;}}
+.flex-row>div{flex:1;display:flex;flex-direction:column;}
+.freq-col{flex:0 0 100px!important;}
+
+.goal-section{margin-top:12px;}
+.goal-header{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:#e6eef6;margin-bottom:4px;}
+.goal-right{display:flex;gap:10px;align-items:baseline;}
+.goal-track{height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;}
+.goal-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--green));transition:width .4s ease;}
+
+.bills-scroll{max-height:150px;overflow-y:scroll;overflow-x:hidden;margin-top:10px;border-radius:4px;}
+.bills-scroll{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.15) transparent;}
+.bills-scroll::-webkit-scrollbar{width:4px;}
+.bills-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:2px;}
+#billsTable{width:100%;border-collapse:collapse;table-layout:fixed;}
+#billsTable colgroup col:nth-child(1){width:40px;}
+#billsTable colgroup col:nth-child(2){width:auto;}
+#billsTable colgroup col:nth-child(3){width:88px;}
+#billsTable colgroup col:nth-child(4){width:84px;}
+#billsTable colgroup col:nth-child(5){width:26px;}
+#billsTable thead th,#billsTable tbody td{text-align:left;padding:5px 0;font-size:12px;color:#e6eef6;white-space:nowrap;overflow:hidden;max-width:0;}
+#billsTable thead th{position:sticky;top:0;z-index:1;background:rgba(35,68,16,0.98);border-bottom:1px solid rgba(255,255,255,0.1);}
+#billsTable tbody td{border-bottom:1px solid rgba(255,255,255,0.04);text-overflow:ellipsis;}
+#billsTable thead th:nth-child(n+2),#billsTable tbody td:nth-child(n+2){padding-left:8px;}
+#billsTable tbody td:last-child{overflow:visible;text-overflow:clip;padding:0 0 0 4px;max-width:none;}
+.pct-col{font-weight:700;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.del-btn{height:22px;font-size:11px;padding:0 5px;width:22px;}
+</style>
+</head>
+<body>
+<div id="fall-stage"></div>
+<div class="wrap">
+  <h1>Income &amp; Expense Visualizer</h1>
+
+  <div class="ticker-row">
+    <div class="ticker" id="ticker">$0.00</div>
+    <div class="ticker-btns">
+      <div class="icon-btn" id="pennyBtn" title="Toggle falling pennies"><span class="penny-ico">¢</span></div>
+    </div>
+  </div>
+  <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+  <div class="cycle-wrap"><div class="cycle-bar" id="cycleBar"></div></div>
+
+  <div class="stats-row">
+    <div class="stat-pill"><span class="lbl">Per Second</span><span class="val zero" id="rateSec">$0.00</span></div>
+    <div class="stat-pill"><span class="lbl">Per Minute</span><span class="val zero" id="rateMin">$0.00</span></div>
+    <div class="stat-pill"><span class="lbl">Per Hour</span> <span class="val zero" id="rateHr">$0.00</span></div>
+    <div class="stat-pill"><span class="lbl">Per Day</span><span class="val zero" id="rateDay">$0.00</span></div>
+    <div class="stat-pill"><span class="lbl">Per Year</span> <span class="val zero" id="rateYr">$0.00</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="flex-row">
+        <div><label>Paycheck</label><input id="payAmount" type="number" step="1" value="0" title="" oninvalid="this.setCustomValidity('')"/></div>
+        <div class="freq-col">
+          <label>Frequency</label>
+          <select id="payFreq">
+            <option value="8760" selected>Hourly</option>
+            <option value="365">Daily</option>
+            <option value="52">Weekly</option>
+            <option value="26">Bi-Weekly</option>
+            <option value="24">Semi-Monthly</option>
+            <option value="12">Monthly</option>
+            <option value="4">Quarterly</option>
+            <option value="1">Yearly</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex-row" style="margin-top:12px">
+        <div><label>Ref date/time</label><input id="lastPay" type="datetime-local"/></div>
+        <div class="freq-col"><button id="resetNow">Set To Now</button></div>
+      </div>
+      <div class="goal-section">
+        <div class="goal-header">
+          <span>Savings Goal</span>
+          <div class="goal-right">
+            <span id="goalTime" style="color:var(--accent);font-weight:600">—</span>
+            <span id="goalPct">0%</span>
+          </div>
+        </div>
+        <div class="goal-track"><div class="goal-fill" id="goalFill"></div></div>
+        <div class="flex-row" style="margin-top:6px">
+          <div><label>Goal ($)</label><input id="goalAmount" type="number" step="100" value="1000"/></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-row">
+        <div><label>Name</label><input id="billName" type="text" placeholder="Rent"/></div>
+        <div><label>Amount</label><input id="billAmt" type="number" step="1" value="0" title="" oninvalid="this.setCustomValidity('')"/></div>
+        <div class="freq-col">
+          <label>Frequency</label>
+          <select id="billFreq">
+            <option value="8760">Hourly</option>
+            <option value="365">Daily</option>
+            <option value="52">Weekly</option>
+            <option value="26">Bi-Weekly</option>
+            <option value="24">Semi-Monthly</option>
+            <option value="12" selected>Monthly</option>
+            <option value="4">Quarterly</option>
+            <option value="1">Yearly</option>
+          </select>
+        </div>
+        <div><button id="addBillBtn">Add</button></div>
+      </div>
+      <div class="bills-scroll">
+        <table id="billsTable">
+          <colgroup><col/><col/><col/><col/><col/></colgroup>
+          <thead>
+            <tr>
+              <th class="pct-col" id="totalPctTh">%</th>
+              <th>Name</th>
+              <th>Amount</th>
+              <th>Frequency</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="billsTBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const SECS_YR = 365.2425 * 86400;
+  const clamp   = (v,a,b) => Math.max(a,Math.min(b,v));
+  const stage   = document.getElementById('fall-stage');
+  const tickerEl= document.getElementById('ticker');
+  const progBar = document.getElementById('progressBar');
+  const cycleBar= document.getElementById('cycleBar');
+  const pennyBtn= document.getElementById('pennyBtn');
+  const billsTBody  = document.getElementById('billsTBody');
+  const totalPctTh  = document.getElementById('totalPctTh');
+  const currency = new Intl.NumberFormat(undefined,{style:'currency',currency:'USD',maximumFractionDigits:2});
+
+  const payAmountEl= document.getElementById('payAmount');
+  const payFreqEl  = document.getElementById('payFreq');
+  const lastPayEl  = document.getElementById('lastPay');
+  const billNameEl = document.getElementById('billName');
+  const billAmtEl  = document.getElementById('billAmt');
+  const billFreqEl = document.getElementById('billFreq');
+  const goalAmtEl  = document.getElementById('goalAmount');
+  const goalFillEl = document.getElementById('goalFill');
+  const goalPctEl  = document.getElementById('goalPct');
+  const goalTimeEl = document.getElementById('goalTime');
+
+  let refTime=null, bills=[], penniesOn=false, periodSec=SECS_YR;
+
+  pennyBtn.addEventListener('click',()=>{
+    penniesOn=!penniesOn;
+    pennyBtn.classList.toggle('active',penniesOn);
+    if(!penniesOn) drainPenniesFromQueue();
+  });
+
+  /* Rates */
+  function parseRef(){ return lastPayEl.value ? new Date(lastPayEl.value).getTime() : Date.now(); }
+  function incRate(){ const a=parseFloat(payAmountEl.value)||0,f=parseFloat(payFreqEl.value)||0; return a*f/SECS_YR; }
+  function expRate(){ return bills.reduce((s,b)=>s+b.amount*b.freq/SECS_YR,0); }
+  function netRate(){ return incRate()-expRate(); }
+  function rc(v){ return v>0?'up':v<0?'dn':'zero'; }
+  function setPill(id,val){ const e=document.getElementById(id); e.textContent=currency.format(val); e.className='val '+rc(val); }
+
+  /* ══════════════════════════════════════════════════════
+     SPAWN SYSTEM
+     Each entry: { kind, red, up, spawnAt }
+     spawnAt = performance.now() timestamp when this item
+               is eligible to actually be spawned.
+     Items sit in the queue until their time arrives;
+     this staggers clumps naturally.
+  ══════════════════════════════════════════════════════ */
+  const activeObjs = [];
+  const MAX_OBJS   = 150;
+
+  // Queue entries: { kind:'bill'|'penny', red, up, spawnAt }
+  let spawnQueue = [];
+
+  // Per-frame hard caps (prevents single-frame spawning tsunamis)
+  const BILLS_PF   = 2;
+  const PENNIES_PF = 6;
+
+  // Stagger intervals (ms between consecutive spawns of same type)
+  // When queue overflows, spread items evenly across a window
+  // Next scheduled spawn time; ensures even spacing when bursts arrive
+  let nextBillTime=0, nextPennyTime=0;
+
+  function enqueueBills(n, red, up){
+    const now = performance.now();
+    // Start from the later of "now" or the last scheduled bill time
+    let t = Math.max(now, nextBillTime);
+    for(let i=0;i<n;i++){
+      spawnQueue.push({kind:'bill', red, up, spawnAt: t});
+      t += 180;
+    }
+    nextBillTime = t;
+  }
+
+  function enqueuePennies(n, red, up){
+    const now = performance.now();
+    let t = Math.max(now, nextPennyTime);
+    for(let i=0;i<n;i++){
+      spawnQueue.push({kind:'penny', red, up, spawnAt: t});
+      t += 40;
+    }
+    nextPennyTime = t;
+  }
+
+  function drainPenniesFromQueue(){
+    spawnQueue = spawnQueue.filter(s => s.kind !== 'penny');
+    nextPennyTime = 0;
+  }
+
+  /* Object constructors */
+  const BILL_W=110, PENNY_W=28;
+  function spawnX(w){ const p=window.innerWidth*0.15; return p+Math.random()*Math.max(0,window.innerWidth-p*2-w); }
+
+  function doSpawnBill(red,up){
+    const el=document.createElement('div');
+    el.className='bill-wrap';
+    el.innerHTML=`<div class="bill${red?' red':''}">$</div>`;
+    activeObjs.push({
+      el,kind:'bill',
+      x:spawnX(BILL_W),
+      y:up?window.innerHeight+70:-90,
+      vx:(Math.random()-0.5)*0.8,
+      vy:up?-0.22-Math.random()*0.18:0.06+Math.random()*0.10,
+      rot:Math.random()*360,
+      rotY:Math.random()*360,
+      rotYV:(Math.random()-0.5)*1.2,
+      seed:Math.random()*1000,
+      grav:up?-0.008:0.008,
+      exitY:up?-120:null,
+    });
+    stage.appendChild(el);
+  }
+
+  function doSpawnPenny(red,up){
+    const el=document.createElement('div');
+    el.className='penny-wrap';
+    el.innerHTML=`<div class="penny${red?' red':''}">¢</div>`;
+    activeObjs.push({
+      el,kind:'penny',
+      x:spawnX(PENNY_W),
+      y:up?window.innerHeight+40:-40,
+      vx:(Math.random()-0.5)*0.8,
+      vy:up?-1.0-Math.random()*0.8:0.8+Math.random()*1.0,
+      spinY:Math.random()*360,
+      spinVY:(Math.random()<0.5?1:-1)*(2.0+Math.random()*3.0),
+      seed:Math.random()*1000,
+      grav:up?-0.018:0.018,
+      exitY:up?-50:null,
+    });
+    stage.appendChild(el);
+  }
+
+  /* Penny edge skip
+     rotateY at 90+k*180 degrees makes the coin edge-on (zero visible width).
+     Instead of bouncing, we JUMP PAST the thin zone entirely.
+     Dead zone: within SKIP_HALF degrees either side of each edge-on angle.
+     When spinY would enter the dead zone we teleport it to the exit side,
+     preserving direction and speed.  The jump is invisible to the eye because
+     the coin is nearly edge-on anyway when it enters the zone.
+  */
+  function pennyEdgeSkip(o){
+    // Work in unwrapped space.  Edge-on angles: 90 + k*180.
+    // For the current spinY find the nearest edge.
+    const k    = Math.round((o.spinY - 90) / 180);
+    const edge = 90 + k * 180;
+    const dist = o.spinY - edge;  // signed distance from that edge
+
+    if(Math.abs(dist) < 20){
+      // Inside dead zone: teleport to exit side in travel direction
+      if(o.spinVY >= 0){
+        o.spinY = edge + 20;
+      } else {
+        o.spinY = edge - 20;
+      }
+    }
+  }
+
+  /* Animation loop */
+  function animateLoop(now){
+    // Drain queue: only spawn items whose spawnAt time has arrived
+    let bd=0, pd=0;
+    for(let i=0; i<spawnQueue.length && activeObjs.length<MAX_OBJS;){
+      const item = spawnQueue[i];
+      if(item.spawnAt > now){ i++; continue; } // not yet ready
+
+      if(item.kind==='bill' && bd < BILLS_PF){
+        doSpawnBill(item.red, item.up);
+        spawnQueue.splice(i,1);
+        bd++;
+      } else if(item.kind==='penny'){
+        if(penniesOn && pd < PENNIES_PF){
+          doSpawnPenny(item.red, item.up);
+          spawnQueue.splice(i,1);
+          pd++;
+        } else if(!penniesOn){
+          spawnQueue.splice(i,1); // discard
+        } else {
+          i++;
+        }
+      } else {
+        i++;
+      }
+    }
+
+    // Animate active objects
+    for(let i=activeObjs.length-1;i>=0;i--){
+      const o=activeObjs[i];
+      if(o.kind==='bill'){
+        const fl = Math.sin(now*0.0018+o.seed)*0.35
+                 + Math.sin(now*0.0011+o.seed*1.3)*0.25;
+        o.vy += o.grav; o.vy *= 0.997;
+        o.vx += fl*0.018; o.vx *= 0.99;
+        o.x  += o.vx*2.5;
+        o.y  += o.vy*2;
+        o.rot += fl*1.8;
+        const tiltX = Math.sin(now*0.0025+o.seed*0.7)*22;
+        o.rotYV += fl*0.55; o.rotYV *= 0.88;
+        o.rotY  += o.rotYV;
+        const bendX = clamp(-o.vx*4,-12,12);
+        const bendY = clamp(-o.vy*2,-8,8);
+        o.el.style.transform =
+          `translate3d(${o.x}px,${o.y}px,0) `+
+          `rotateZ(${o.rot}deg) `+
+          `rotateX(${tiltX+bendY}deg) `+
+          `rotateY(${o.rotY}deg) `+
+          `skewX(${bendX}deg)`;
+        const gone = o.exitY!==null ? o.y<o.exitY : o.y>window.innerHeight+110;
+        if(gone){ stage.removeChild(o.el); activeObjs.splice(i,1); }
+
+      } else {
+        const s1=Math.sin(now*0.0022+o.seed), s2=Math.sin(now*0.0014+o.seed*1.5);
+        const fl=s1*0.12+s2*0.08;
+        o.vy += o.grav; o.vy *= 0.998;
+        o.vx += fl*0.02; o.vx *= 0.991;
+        o.x  += o.vx*2;
+        o.y  += o.vy*2;
+        const torque=s1*0.9+s2*0.6;
+        o.spinVY += torque*0.06;
+        o.spinVY *= 0.93;
+        o.spinY += o.spinVY;
+        pennyEdgeSkip(o);
+        const tiltZ = Math.sin(now*0.0008+o.seed*0.6)*12;
+        o.el.style.transform =
+          `translate3d(${o.x}px,${o.y}px,0) rotateY(${o.spinY}deg) rotateZ(${tiltZ}deg)`;
+        const gone = o.exitY!==null ? o.y<o.exitY : o.y>window.innerHeight+45;
+        if(gone){ stage.removeChild(o.el); activeObjs.splice(i,1); }
+      }
+    }
+    requestAnimationFrame(animateLoop);
+  }
+  requestAnimationFrame(animateLoop);
+
+  /* Tracking */
+  let lastCentFloor=0, lastDollarFloor=0, lastMode=null;
+
+  function doSetToNow(){
+    const n=new Date(), p=v=>String(v).padStart(2,'0');
+    lastPayEl.value=`${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())}T${p(n.getHours())}:${p(n.getMinutes())}`;
+    resetTracking(); update();
+  }
+  document.getElementById('resetNow').addEventListener('click',doSetToNow);
+
+  function resetTracking(){
+    lastCentFloor=0; lastDollarFloor=0; lastMode=null;
+    spawnQueue=[]; nextBillTime=0; nextPennyTime=0;
+    refTime=parseRef();
+    periodSec=SECS_YR/(parseFloat(payFreqEl.value)||1);
+  }
+
+  function update(){
+    if(refTime===null) refTime=parseRef();
+    const now  = Date.now();
+    const el   = Math.max(0,(now-refTime)/1000);
+    const ir   = incRate(), nr=ir-expRate();
+    const inc  = el*ir, net=el*nr;
+    const isNeg= nr<0;
+    const mode = isNeg?'neg':'pos';
+
+    if(mode!==lastMode){
+      spawnQueue=[]; nextBillTime=0; nextPennyTime=0;
+      const tv=isNeg?Math.abs(net):inc;
+      lastCentFloor=Math.floor(tv*100);
+      lastDollarFloor=Math.floor(tv);
+      lastMode=mode;
+    }
+
+    const trackVal=isNeg?Math.abs(net):inc;
+
+    tickerEl.textContent=currency.format(net);
+    tickerEl.className='ticker '+(nr>0?'positive':nr<0?'negative':'');
+
+    const frac=trackVal-Math.floor(trackVal);
+    progBar.style.width=(frac*100).toFixed(2)+'%';
+    progBar.classList.toggle('neg',isNeg);
+
+    // Penny enqueue: 1 per cent
+    const cf=Math.floor(trackVal*100);
+    if(cf>lastCentFloor){
+      const n=Math.min(cf-lastCentFloor, 500);
+      enqueuePennies(n, isNeg, isNeg);
+      lastCentFloor=cf;
+    }
+
+    // Bill enqueue: 1 per dollar
+    const df=Math.floor(trackVal);
+    if(df>lastDollarFloor){
+      const n=Math.min(df-lastDollarFloor, 50);
+      enqueueBills(n, isNeg, isNeg);
+      lastDollarFloor=df;
+    }
+
+    cycleBar.style.width=(periodSec>0?(el%periodSec)/periodSec*100:0).toFixed(2)+'%';
+
+    setPill('rateSec',nr); setPill('rateMin',nr*60); setPill('rateHr',nr*3600);
+    setPill('rateDay',nr*86400); setPill('rateYr',nr*SECS_YR);
+
+    const goal=parseFloat(goalAmtEl.value)||1000;
+    const pg=Math.min(Math.max(net/goal*100,0),100);
+    goalFillEl.style.width=pg+'%';
+    goalPctEl.textContent=pg.toFixed(1)+'%';
+    const gt=goalTimeEl;
+    const rem=goal-net;
+    if(net>=goal){ gt.textContent='✅ Reached!'; }
+    else if(nr>0&&rem>0){
+      const s=rem/nr;
+      gt.textContent=s<60?s.toFixed(0)+'s':s<3600?(s/60).toFixed(1)+'m':s<86400?(s/3600).toFixed(1)+'h':s<86400*365?(s/86400).toFixed(1)+'d':(s/(86400*365)).toFixed(1)+'yr';
+    } else { gt.textContent='—'; }
+
+    updateBillPcts(ir*SECS_YR);
+  }
+
+  /* Bills table */
+  function fmtPct(v){ return isFinite(v)&&v>0?v.toFixed(1)+'%':'—'; }
+
+  function renderBills(){
+    billsTBody.innerHTML='';
+    const annInc=incRate()*SECS_YR;
+    bills.forEach((b,i)=>{
+      const ann=b.amount*b.freq;
+      const pct=annInc>0?ann/annInc*100:0;
+      const tr=document.createElement('tr');
+      tr.dataset.idx=i;
+      tr.innerHTML=`
+        <td class="pct-col" data-pct title="${fmtPct(pct)}">${fmtPct(pct)}</td>
+        <td title="${esc(b.name)}">${esc(b.name)}</td>
+        <td title="${currency.format(b.amount)}">${currency.format(b.amount)}</td>
+        <td>${b.freq}</td>
+        <td><button data-i="${i}" class="del-btn">✕</button></td>`;
+      billsTBody.appendChild(tr);
+    });
+    billsTBody.querySelectorAll('button[data-i]').forEach(btn=>{
+      btn.addEventListener('click',e=>{ bills.splice(+e.currentTarget.dataset.i,1); renderBills(); update(); });
+    });
+  }
+
+  function updateBillPcts(annInc){
+    let totalAnn=0;
+    billsTBody.querySelectorAll('tr[data-idx]').forEach(row=>{
+      const b=bills[+row.dataset.idx]; if(!b) return;
+      const ann=b.amount*b.freq;
+      totalAnn+=ann;
+      const cell=row.querySelector('[data-pct]');
+      if(cell){ const p=fmtPct(annInc>0?ann/annInc*100:0); cell.textContent=p; cell.title=p; }
+    });
+    totalPctTh.textContent=annInc>0&&bills.length>0?fmtPct(totalAnn/annInc*100):'%';
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+  /* Wiring */
+  document.getElementById('addBillBtn').addEventListener('click',()=>{
+    const name=(billNameEl.value||'').trim()||'Bill';
+    bills.push({name,amount:parseFloat(billAmtEl.value)||0,freq:parseFloat(billFreqEl.value)||0});
+    billNameEl.value=''; billAmtEl.value='0'; billFreqEl.value='12';
+    renderBills(); resetFloors(); update();
+  });
+
+  // When income rate changes, reset spawn floors so the new rate is
+  // treated as a fresh baseline: no burst or skip.
+  function resetFloors(){
+    const ir  = incRate(), nr = ir-expRate();
+    const el  = refTime ? Math.max(0,(Date.now()-refTime)/1000) : 0;
+    const inc = el * ir;
+    const net = el * nr;
+    const isNeg = nr < 0;
+    const tv = isNeg ? Math.abs(net) : inc;
+    lastCentFloor   = Math.floor(tv * 100);
+    lastDollarFloor = Math.floor(tv);
+    lastMode        = isNeg ? 'neg' : 'pos';
+    // clear any pending queue built under old rate
+    spawnQueue = []; nextBillTime = 0; nextPennyTime = 0;
+    periodSec = SECS_YR / (parseFloat(payFreqEl.value)||1);
+  }
+
+  // payAmount and payFreq: update on every keystroke/change AND reset floors
+  [payAmountEl, payFreqEl].forEach(el => {
+    el.addEventListener('input', () => { resetFloors(); renderBills(); update(); });
+  });
+
+  // goalAmount: just re-render, no floor reset needed
+  goalAmtEl.addEventListener('input', () => update());
+
+  lastPayEl.addEventListener('change',()=>{
+    if(lastPayEl.value && new Date(lastPayEl.value).getTime() < Date.now()){
+      doSetToNow();
+    } else {
+      resetTracking(); update();
+    }
+  });
+
+  refTime=null; renderBills(); update();
+  setInterval(update,50);
+})();
+</script>
+</body>
+</html>
