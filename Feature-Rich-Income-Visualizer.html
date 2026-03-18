@@ -373,19 +373,30 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     stage.appendChild(el);
   }
 
-  // rotateY(90) makes a coin invisible. Jump past that angle so it always shows a face.
+  // rotateY(90) makes a coin invisible. When spinY nears a dead angle (odd multiple of 90°),
+  // snap past it and guarantee a minimum exit speed so torque/damping can't stall the coin
+  // inside the zone on the next frame — which was the cause of the twitching.
+  //
+  // SKIP    : degrees past the edge to land. Must exceed max single-frame spinVY so we
+  //           never inadvertently overshoot back through the same edge.
+  // MIN_SPD : guaranteed |spinVY| after the snap. Max torque contribution per frame is
+  //           (0.9+0.6)*0.06 ≈ 0.09°, well below this, so the coin always exits cleanly.
   function pennyEdgeSkip(o){
-    // Find the nearest invisible angle.
+    const SKIP    = 18;
+    const MIN_SPD = 2.2;
+
     const k    = Math.round((o.spinY - 90) / 180);
     const edge = 90 + k * 180;
-    const dist = o.spinY - edge; // how far spinY is from the danger angle
+    const dist = o.spinY - edge;
 
-    if(Math.abs(dist) < 20){
-      // Jump to the far side of the dead zone, continuing in the same direction.
-      if(o.spinVY >= 0){
-        o.spinY = edge + 20;
-      } else {
-        o.spinY = edge - 20;
+    if(Math.abs(dist) < SKIP){
+      // Which side are we exiting toward?
+      const dir = o.spinVY >= 0 ? 1 : -1;
+      // Land SKIP degrees past the dead angle on the exit side.
+      o.spinY = edge + dir * SKIP;
+      // Guarantee next frame lands outside the threshold.
+      if(dir * o.spinVY < MIN_SPD){
+        o.spinVY = dir * MIN_SPD;
       }
     }
   }
