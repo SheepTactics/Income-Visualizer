@@ -24,6 +24,7 @@ html,body{margin:0;font-family:Inter,system-ui,sans-serif;background:#353839;col
   font-weight:800;font-size:20px;color:#134b2e;
   font-family:ui-monospace,monospace;user-select:none;position:relative;
 }
+/* Inner dashed border ring on the bill face. pointer-events:none keeps it from eating clicks. */
 .bill::before{content:'';position:absolute;inset:4px;border:1px dashed rgba(31,107,61,0.4);border-radius:3px;pointer-events:none;}
 .bill.red{background:linear-gradient(135deg,#fecaca,#f87171);border-color:#991b1b;color:#7f1d1d;}
 .bill.red::before{border-color:rgba(153,27,27,0.4);}
@@ -40,6 +41,9 @@ html,body{margin:0;font-family:Inter,system-ui,sans-serif;background:#353839;col
   font-family:ui-monospace,monospace;user-select:none;
 }
 .penny.red{background:radial-gradient(circle at 38% 32%,#fca5a5,#ef4444 55%,#7f1d1d);border-color:#7f1d1d;}
+/* Back face: shown when the coin has flipped past 90 deg. Mirrored highlight. */
+.penny.back{background:radial-gradient(circle at 62% 68%,#e8a832,#a05a0c 55%,#6a3200);}
+.penny.red.back{background:radial-gradient(circle at 62% 68%,#f87171,#dc2626 55%,#7f1d1d);}
  
 /* Main content column. z-index:10 keeps it above the falling stage. */
 .wrap{position:relative;z-index:10;max-width:760px;margin:48px auto;padding:0 12px;box-sizing:border-box;}
@@ -88,6 +92,7 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
 .stat-pill{flex:1;min-width:0;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:4px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;}
 .stat-pill .lbl{color:var(--muted);font-size:10px;white-space:nowrap;}
 .stat-pill .val{font-weight:700;font-family:ui-monospace,monospace;font-size:11px;width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Color states for rate pill values. */
 .val.up{color:var(--green)}.val.dn{color:var(--danger)}.val.zero{color:var(--muted)}
  
 /* Two-column layout. Left card is flexible; right (bills) is fixed at 390px. */
@@ -135,6 +140,7 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
 #billsTable tbody td{border-bottom:1px solid rgba(255,255,255,0.04);text-overflow:ellipsis;}
 #billsTable thead th:nth-child(1),#billsTable tbody td:nth-child(1){padding-left:8px;}
 #billsTable thead th:nth-child(n+2),#billsTable tbody td:nth-child(n+2){padding-left:8px;}
+/* Delete column: overflow visible lets the button render outside the clipped cell area. */
 #billsTable tbody td:last-child{overflow:visible;text-overflow:clip;padding:0 0 0 4px;max-width:none;}
 .pct-col{font-weight:700;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* Small delete button in the bill table. Styled here to avoid repeating inline styles per row. */
@@ -242,8 +248,10 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
 (function(){
   // Seconds in a Gregorian year - used to convert any pay frequency to a per-second rate.
   const SECS_YR = 365.2425 * 86400;
+  // Math method refs at module level - stable references, no need to destructure every frame.
+  const {sin, cos, abs, max, min, floor} = Math;
   // clamp keeps a value inside [a, b]. Used for physics limits.
-  const clamp   = (v,a,b) => Math.max(a,Math.min(b,v));
+  const clamp   = (v,a,b) => max(a,min(b,v));
   // DOM refs cached once at startup - cheaper than querying every tick.
   const stage   = document.getElementById('fall-stage');
   const tickerEl= document.getElementById('ticker');
@@ -254,6 +262,13 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   const totalPctTh  = document.getElementById('totalPctTh');
   // Currency formatter - locale-aware, always USD, max 2 decimal places.
   const currency = new Intl.NumberFormat(undefined,{style:'currency',currency:'USD',maximumFractionDigits:2});
+
+  // Rate pill elements cached once - setPill is called 5x every 50ms tick.
+  const pillSec  = document.getElementById('rateSec');
+  const pillMin  = document.getElementById('rateMin');
+  const pillHr   = document.getElementById('rateHr');
+  const pillDay  = document.getElementById('rateDay');
+  const pillYr   = document.getElementById('rateYr');
 
   const payAmountEl= document.getElementById('payAmount');
   const payFreqEl  = document.getElementById('payFreq');
@@ -266,6 +281,8 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   const goalPctEl  = document.getElementById('goalPct');
   const goalTimeEl = document.getElementById('goalTime');
 
+  const addBillBtn = document.getElementById('addBillBtn');
+  const resetNowBtn= document.getElementById('resetNow');
   // refTime: ms timestamp of the reference paycheck date.
   // bills: array of expense objects { name, amount, freq }.
   // penniesOn: whether the penny animation is enabled.
@@ -279,8 +296,7 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     if(!penniesOn) drainPenniesFromQueue();
   });
 
-  // Reads the reference date input and returns a ms timestamp.
-  // Blank field defaults to right now so the timer still runs.
+  // Reads the ref date input and returns a ms timestamp. Blank defaults to now so the timer keeps running.
   function parseRef(){ return lastPayEl.value ? new Date(lastPayEl.value).getTime() : Date.now(); }
 
   // incRate: paycheck amount * times per year / seconds per year = dollars per second.
@@ -289,8 +305,14 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   function expRate(){ return bills.reduce((s,b)=>s+b.amount*b.freq/SECS_YR,0); }
   // rc: maps a number to a CSS class name for color coding.
   function rc(v){ return v>0?'up':v<0?'dn':'zero'; }
-  // setPill: writes a formatted dollar value into a rate pill and colors it.
-  function setPill(id,val){ const e=document.getElementById(id); e.textContent=currency.format(val); e.className='val '+rc(val); }
+  // setPill: formats a dollar value into a rate pill. Elements pre-cached - no getElementById on the hot path.
+  function setPill(el,val){ el.textContent=currency.format(val); el.className='val '+rc(val); }
+
+  // Physics constants hoisted out of animateLoop so they aren't re-declared every frame.
+  const DEG2RAD    = Math.PI / 180;
+  const SPIN_EDGE  = 80;          // penny bounce boundary (degrees)
+  const SPIN_MIN_V = 4.0;         // minimum exit speed after bounce
+  const SPIN_FLOOR = 1.2;         // per-frame speed floor - prevents mid-swing stall
 
   // Pending spawn queue; each item has a scheduled release time to prevent bursts.
   const activeObjs = [];
@@ -306,8 +328,9 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   // Tracks the end of each type's current batch so new items append cleanly.
   let nextBillTime=0, nextPennyTime=0;
 
+  // Schedules n bills 180ms apart, appending after the current batch end.
   function enqueueBills(n, red, up){
-    let t = Math.max(performance.now(), nextBillTime);
+    let t = max(performance.now(), nextBillTime);
     for(let i=0;i<n;i++){
       spawnQueue.push({kind:'bill', red, up, spawnAt: t});
       t += 180;
@@ -315,8 +338,9 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     nextBillTime = t;
   }
 
+  // Schedules n pennies 40ms apart, appending after the current batch end.
   function enqueuePennies(n, red, up){
-    let t = Math.max(performance.now(), nextPennyTime);
+    let t = max(performance.now(), nextPennyTime);
     for(let i=0;i<n;i++){
       spawnQueue.push({kind:'penny', red, up, spawnAt: t});
       t += 40;
@@ -324,6 +348,7 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     nextPennyTime = t;
   }
 
+  // Drops all queued pennies when the toggle is turned off.
   function drainPenniesFromQueue(){
     spawnQueue = spawnQueue.filter(s => s.kind !== 'penny');
     nextPennyTime = 0;
@@ -332,7 +357,7 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   // Spawn helpers: build the DOM element, set physics state, and add to the stage.
   const BILL_W=110, PENNY_W=28; // pixel widths used to keep objects away from screen edges.
   // spawnX: random X position padded 15% from each side so objects never hug the wall.
-  function spawnX(w){ const p=window.innerWidth*0.15; return p+Math.random()*Math.max(0,window.innerWidth-p*2-w); }
+  function spawnX(w){ const p=window.innerWidth*0.15; return p+Math.random()*max(0,window.innerWidth-p*2-w); }
 
   function doSpawnBill(red,up){
     const el=document.createElement('div');
@@ -358,47 +383,22 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     const el=document.createElement('div');
     el.className='penny-wrap';
     el.innerHTML=`<div class="penny${red?' red':''}">¢</div>`;
+    const face = el.firstChild;
     activeObjs.push({
-      el,kind:'penny',
+      el,face,kind:'penny',
       x:spawnX(PENNY_W),
       y:up?window.innerHeight+40:-40,
       vx:(Math.random()-0.5)*0.8,
       vy:up?-1.0-Math.random()*0.8:0.8+Math.random()*1.0,
-      spinY:Math.random()*360,  // current Y rotation (coin spin)
-      spinVY:(Math.random()<0.5?1:-1)*(2.0+Math.random()*3.0), // spin speed, random direction
+      spinY:(Math.random()*2-1)*70, // start within bounce zone so no multi-bounce on frame 1
+      spinVY:(Math.random()<0.5?1:-1)*(1.0+Math.random()*2.0), // spin speed, random direction
+      isBack:false,             // tracks which face is currently showing
+      red,                      // stored so face-swap can apply correct color class
       seed:Math.random()*1000,  // phase offset for flutter variation
       grav:up?-0.018:0.018,    // pennies fall faster than bills
       exitY:up?-50:null,
     });
     stage.appendChild(el);
-  }
-
-  // rotateY(90) makes a coin invisible. When spinY nears a dead angle (odd multiple of 90°),
-  // snap past it and guarantee a minimum exit speed so torque/damping can't stall the coin
-  // inside the zone on the next frame — which was the cause of the twitching.
-  //
-  // SKIP    : degrees past the edge to land. Must exceed max single-frame spinVY so we
-  //           never inadvertently overshoot back through the same edge.
-  // MIN_SPD : guaranteed |spinVY| after the snap. Max torque contribution per frame is
-  //           (0.9+0.6)*0.06 ≈ 0.09°, well below this, so the coin always exits cleanly.
-  function pennyEdgeSkip(o){
-    const SKIP    = 18;
-    const MIN_SPD = 2.2;
-
-    const k    = Math.round((o.spinY - 90) / 180);
-    const edge = 90 + k * 180;
-    const dist = o.spinY - edge;
-
-    if(Math.abs(dist) < SKIP){
-      // Which side are we exiting toward?
-      const dir = o.spinVY >= 0 ? 1 : -1;
-      // Land SKIP degrees past the dead angle on the exit side.
-      o.spinY = edge + dir * SKIP;
-      // Guarantee next frame lands outside the threshold.
-      if(dir * o.spinVY < MIN_SPD){
-        o.spinVY = dir * MIN_SPD;
-      }
-    }
   }
 
   // Main loop: releases due queue items, then steps physics for all active objects.
@@ -432,19 +432,19 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     for(let i=activeObjs.length-1;i>=0;i--){
       const o=activeObjs[i];
       if(o.kind==='bill'){
-        // Two overlapping sine waves with different frequencies = organic leaf flutter.
-        const fl = Math.sin(now*0.0018+o.seed)*0.35
-                 + Math.sin(now*0.0011+o.seed*1.3)*0.25;
-        o.vy += o.grav; o.vy *= 0.997; // gravity + slight air resistance
-        o.vx += fl*0.018; o.vx *= 0.99; // lateral drift from flutter
+        // Two overlapping sine waves at different frequencies = organic leaf flutter.
+        const fl = sin(now*0.0018+o.seed)*0.35
+                 + sin(now*0.0011+o.seed*1.3)*0.25;
+        o.vy += o.grav; o.vy *= 0.997;
+        o.vx += fl*0.018; o.vx *= 0.99;
         o.x  += o.vx*2.5;
         o.y  += o.vy*2;
         o.rot += fl*1.8;
-        const tiltX = Math.sin(now*0.0025+o.seed*0.7)*22;
-        // Y-axis flip driven by the same flutter - heavy damping gives it inertial weight.
+        const tiltX = sin(now*0.0025+o.seed*0.7)*22;
+        // Y-axis flip driven by the flutter force. Heavy damping gives it inertial weight.
         o.rotYV += fl*0.55; o.rotYV *= 0.88;
         o.rotY  += o.rotYV;
-        // Bend the bill into its direction of travel like a real note catching air.
+        // Bend the bill into its travel direction like a real note catching air.
         const bendX = clamp(-o.vx*4,-12,12);
         const bendY = clamp(-o.vy*2,-8,8);
         o.el.style.transform =
@@ -457,23 +457,36 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
         if(gone){ stage.removeChild(o.el); activeObjs.splice(i,1); }
 
       } else {
-        // Shared sine bases - computed once and reused for both sway (fl) and spin torque.
-        const s1=Math.sin(now*0.0022+o.seed), s2=Math.sin(now*0.0014+o.seed*1.5);
-        const fl=s1*0.12+s2*0.08; // lateral sway
+        // Two sine waves at different frequencies, reused for both lateral sway and spin torque.
+        const s1=sin(now*0.0022+o.seed), s2=sin(now*0.0014+o.seed*1.5);
+        const fl=s1*0.12+s2*0.08; // lateral sway force
         o.vy += o.grav; o.vy *= 0.998;
         o.vx += fl*0.02; o.vx *= 0.991;
         o.x  += o.vx*2;
         o.y  += o.vy*2;
-        // Turbulence torque: same wave but scaled up to drive the spin.
-        // Damping at 0.93 gives the coin inertial weight.
-        const torque=s1*0.9+s2*0.6;
+        const torque=s1*0.9+s2*0.6; // same waves scaled up to drive the spin
         o.spinVY += torque*0.06;
-        o.spinVY *= 0.93;
+        o.spinVY *= 0.93; // damping gives the coin inertial weight
+        // Speed floor: damping can stall the coin mid-swing. Always keep it moving.
+        if(abs(o.spinVY) < SPIN_FLOOR) o.spinVY = (o.spinVY >= 0 ? 1 : -1) * SPIN_FLOOR;
         o.spinY += o.spinVY;
-        pennyEdgeSkip(o);
-        const tiltZ = Math.sin(now*0.0008+o.seed*0.6)*12;
+        // Bounce at the edge: reflect velocity, swap face, enforce minimum exit speed.
+        if(o.spinY > SPIN_EDGE){
+          o.spinY   = 2*SPIN_EDGE - o.spinY;
+          o.spinVY  = -max(abs(o.spinVY), SPIN_MIN_V);
+          o.isBack  = !o.isBack;
+          o.face.className = 'penny'+(o.isBack?' back':'')+(o.red?' red':'');
+        } else if(o.spinY < -SPIN_EDGE){
+          o.spinY   = -2*SPIN_EDGE - o.spinY;
+          o.spinVY  = max(abs(o.spinVY), SPIN_MIN_V);
+          o.isBack  = !o.isBack;
+          o.face.className = 'penny'+(o.isBack?' back':'')+(o.red?' red':'');
+        }
+        // scaleX(cos) compresses the coin toward zero at the bounce point, simulating foreshortening.
+        const scaleX = cos(o.spinY * DEG2RAD);
+        const tiltZ  = sin(now*0.0008+o.seed*0.6)*12; // slow Z wobble for visual variation
         o.el.style.transform =
-          `translate3d(${o.x}px,${o.y}px,0) rotateY(${o.spinY}deg) rotateZ(${tiltZ}deg)`;
+          `translate3d(${o.x}px,${o.y}px,0) scaleX(${scaleX}) rotateZ(${tiltZ}deg)`;
         const gone = o.exitY!==null ? o.y<o.exitY : o.y>window.innerHeight+45;
         if(gone){ stage.removeChild(o.el); activeObjs.splice(i,1); }
       }
@@ -488,12 +501,14 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   // Returns current datetime formatted for a datetime-local input.
   function nowStr(){ const n=new Date(),p=v=>String(v).padStart(2,'0'); return `${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())}T${p(n.getHours())}:${p(n.getMinutes())}`; }
 
+  // Snaps the ref date to the current moment and resets all tracking state.
   function doSetToNow(){
     lastPayEl.value=nowStr();
     resetTracking(); update();
   }
-  document.getElementById('resetNow').addEventListener('click',doSetToNow);
+  resetNowBtn.addEventListener('click',doSetToNow);
 
+  // Full reset: clears floors, re-reads the ref date, and recalculates the period length.
   function resetTracking(){
     lastCentFloor=0; lastDollarFloor=0; lastMode=null;
     spawnQueue=[]; nextBillTime=0; nextPennyTime=0;
@@ -501,10 +516,11 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     periodSec=SECS_YR/(parseFloat(payFreqEl.value)||1);
   }
 
+  // Recomputes all derived values from the current timestamp and updates the UI.
   function update(){
     if(refTime===null) refTime=parseRef();
     const now  = Date.now();
-    const el   = Math.max(0,(now-refTime)/1000);
+    const el   = max(0,(now-refTime)/1000);
     const ir   = incRate(), nr=ir-expRate();
     const inc  = el*ir, net=el*nr;
     const isNeg= nr<0;
@@ -514,46 +530,45 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
     // position -- avoids a burst of stale objects spawning from the old direction.
     if(mode!==lastMode){
       spawnQueue=[]; nextBillTime=0; nextPennyTime=0;
-      const tv=isNeg?Math.abs(net):inc;
-      lastCentFloor=Math.floor(tv*100);
-      lastDollarFloor=Math.floor(tv);
+      const tv=isNeg?abs(net):inc;
+      lastCentFloor=floor(tv*100);
+      lastDollarFloor=floor(tv);
       lastMode=mode;
     }
 
-    // trackVal: the value objects are counted against (income if positive, loss if negative).
-    // Positive mode: track gross income earned. Negative: track net loss.
-    const trackVal=isNeg?Math.abs(net):inc;
+    // trackVal: gross income in positive mode, absolute net loss in negative mode.
+    const trackVal=isNeg?abs(net):inc;
 
     tickerEl.textContent=currency.format(net);
     tickerEl.className='ticker '+(nr>0?'positive':nr<0?'negative':'');
 
-    // Progress bar: fractional cent position within the current dollar (0-100%).
-    const frac=trackVal-Math.floor(trackVal);
+    const frac=trackVal-floor(trackVal);
     progBar.style.width=(frac*100).toFixed(2)+'%';
-    progBar.classList.toggle('neg',isNeg); // switches to red style when losing money
+    progBar.classList.toggle('neg',isNeg);
 
-    const cf=Math.floor(trackVal*100);
+    // Spawn one penny per cent earned since last tick.
+    const cf=floor(trackVal*100);
     if(cf>lastCentFloor){
-      const toSpawn=Math.min(cf-lastCentFloor, 500);
+      const toSpawn=min(cf-lastCentFloor, 500);
       enqueuePennies(toSpawn, isNeg, isNeg);
       lastCentFloor=cf;
     }
 
-    const df=Math.floor(trackVal);
+    // Spawn one bill per dollar earned since last tick.
+    const df=floor(trackVal);
     if(df>lastDollarFloor){
-      const toSpawn=Math.min(df-lastDollarFloor, 50);
+      const toSpawn=min(df-lastDollarFloor, 50);
       enqueueBills(toSpawn, isNeg, isNeg);
       lastDollarFloor=df;
     }
 
-    // Cycle bar: progress through the current pay period.
     cycleBar.style.width=(periodSec>0?(el%periodSec)/periodSec*100:0).toFixed(2)+'%';
 
-    setPill('rateSec',nr); setPill('rateMin',nr*60); setPill('rateHr',nr*3600);
-    setPill('rateDay',nr*86400); setPill('rateYr',nr*SECS_YR);
+    setPill(pillSec,nr); setPill(pillMin,nr*60); setPill(pillHr,nr*3600);
+    setPill(pillDay,nr*86400); setPill(pillYr,nr*SECS_YR);
 
     const goal=parseFloat(goalAmtEl.value)||1000;
-    const pg=Math.min(Math.max(net/goal*100,0),100);
+    const pg=min(max(net/goal*100,0),100);
     goalFillEl.style.width=pg+'%';
     goalPctEl.textContent=pg.toFixed(1)+'%';
     const rem=goal-net;
@@ -572,6 +587,7 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   const FREQ_LABEL={8760:'Hourly',365:'Daily',52:'Weekly',26:'Bi-Weekly',24:'Semi-Monthly',12:'Monthly',4:'Quarterly',1:'Yearly'};
   function freqLabel(f){ return FREQ_LABEL[f]||f; } // falls back to the raw number if unknown
 
+  // Rebuilds the bill table from scratch. Called when the bills array changes.
   function renderBills(){
     billsTBody.innerHTML='';
     const annInc=incRate()*SECS_YR;
@@ -580,10 +596,11 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
       const pct=annInc>0?ann/annInc*100:0;
       const tr=document.createElement('tr');
       tr.dataset.idx=i;
+      const fp=fmtPct(pct), en=esc(b.name), cf=currency.format(b.amount);
       tr.innerHTML=`
-        <td class="pct-col" data-pct title="${fmtPct(pct)}">${fmtPct(pct)}</td>
-        <td title="${esc(b.name)}">${esc(b.name)}</td>
-        <td title="${currency.format(b.amount)}">${currency.format(b.amount)}</td>
+        <td class="pct-col" data-pct title="${fp}">${fp}</td>
+        <td title="${en}">${en}</td>
+        <td title="${cf}">${cf}</td>
         <td>${freqLabel(b.freq)}</td>
         <td><button data-i="${i}" class="del-btn">✕</button></td>`;
       billsTBody.appendChild(tr);
@@ -601,17 +618,18 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
       const b=bills[+row.dataset.idx]; if(!b) return;
       const ann=b.amount*b.freq;
       totalAnn+=ann;
-      const cell=row.querySelector('[data-pct]');
+      const cell=row.cells[0]; // pct is always the first column
       if(cell){ const p=fmtPct(annInc>0?ann/annInc*100:0); cell.textContent=p; cell.title=p; }
     });
     totalPctTh.textContent=annInc>0&&bills.length>0?fmtPct(totalAnn/annInc*100):'%';
   }
 
+  // HTML escape map. Prevents injection when inserting user-typed bill names into innerHTML.
   const ESC={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
   function esc(s){ return String(s).replace(/[&<>"']/g,c=>ESC[c]); }
 
   // Add bill: read inputs, push to bills array, reset fields, then recalculate everything.
-  document.getElementById('addBillBtn').addEventListener('click',()=>{
+  addBillBtn.addEventListener('click',()=>{
     const name=(billNameEl.value||'').trim()||'Bill'; // default name if left blank
     bills.push({name,amount:parseFloat(billAmtEl.value)||0,freq:parseFloat(billFreqEl.value)||0});
     billNameEl.value=''; billAmtEl.value=''; billFreqEl.value='12';
@@ -621,13 +639,13 @@ h1{font-size:16px;margin:0 0 8px;letter-spacing:.5px;}
   // Recalibrate spawn floors after a rate change to avoid a burst or gap.
   function resetFloors(){
     const ir  = incRate(), nr = ir-expRate();
-    const el  = refTime ? Math.max(0,(Date.now()-refTime)/1000) : 0;
+    const el  = refTime ? max(0,(Date.now()-refTime)/1000) : 0;
     const inc = el * ir;
     const net = el * nr;
     const isNeg = nr < 0;
-    const tv = isNeg ? Math.abs(net) : inc;
-    lastCentFloor   = Math.floor(tv * 100);
-    lastDollarFloor = Math.floor(tv);
+    const tv = isNeg ? abs(net) : inc;
+    lastCentFloor   = floor(tv * 100);
+    lastDollarFloor = floor(tv);
     lastMode        = isNeg ? 'neg' : 'pos';
     spawnQueue = []; nextBillTime = 0; nextPennyTime = 0;
     periodSec = SECS_YR / (parseFloat(payFreqEl.value)||1);
